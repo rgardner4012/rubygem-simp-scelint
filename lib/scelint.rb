@@ -32,13 +32,16 @@ module Scelint
           ].each do |dir|
             ['yaml', 'json'].each do |type|
               Dir.glob("#{path}/#{dir}/**/*.#{type}").each do |file|
-                @data[file] = parse(file)
+                this_file = parse(file)
+                next if this_file.nil?
+                @data[file] = this_file
                 merged_data = merged_data.deep_merge!(@data[file])
               end
             end
           end
         elsif File.exist?(path)
-          @data[path] = parse(path)
+          this_file = parse(path)
+          @data[path] = this_file unless this_file.nil?
         else
           raise "Can't find path '#{path}'"
         end
@@ -51,6 +54,8 @@ module Scelint
       @data.each do |file, data|
         lint(file, data)
       end
+
+      validate
 
       @data # rubocop:disable Lint/Void
     end
@@ -65,7 +70,7 @@ module Scelint
                'json'
              else
                @errors << "#{file}: Failed to determine file type"
-               nil
+               return nil
              end
       begin
         return YAML.safe_load(File.read(file)) if type == 'yaml'
@@ -74,7 +79,7 @@ module Scelint
         @errors << "#{file}: Failed to parse file: #{e.message}"
       end
 
-      {}
+      nil
     end
 
     def files
@@ -252,7 +257,6 @@ module Scelint
 
       if remediation_section.is_a?(Hash)
         remediation_section.each do |section, value|
-          # require 'pry-byebug'; binding.pry if section == 'disabled'
           case section
           when 'scan-false-positive', 'disabled'
             value.each do |reason|
@@ -368,6 +372,223 @@ module Scelint
       end
     end
 
+    def profiles
+      return @profiles unless @profiles.nil?
+
+      return nil unless @data.key?('merged data')
+      return nil unless @data['merged data']['profiles'].is_a?(Hash)
+
+      @profiles = @data['merged data']['profiles'].keys
+    end
+
+    def confines
+      return @confines unless @confines.nil?
+
+      confine = {}
+
+      @data.each do |key, value|
+        next if key == 'merged data'
+        next unless value.is_a?(Hash)
+
+        ['profiles', 'ce', 'checks'].each do |type|
+          next unless value.key?(type)
+          next unless value[type].is_a?(Hash)
+
+          value[type].each do |_k, v|
+            next unless v.is_a?(Hash)
+            confine = confine.merge(v['confine']) if v.key?('confine')
+          end
+        end
+      end
+
+      @confines = []
+      index = 0
+      max_count = 1
+      confine.each { |_key, value| max_count *= Array(value).size }
+
+      confine.each do |key, value|
+        (index..(max_count - 1)).each do |i|
+          @confines[i] ||= {}
+          @confines[i][key] = Array(value)[i % Array(value).size]
+        end
+      end
+
+      @confines
+    end
+
+    def apply_confinement(file, data, confine)
+      return data unless data.is_a?(Hash)
+
+      class << self
+        def should_delete(file, key, specification, confine)
+          return false unless specification.key?('confine')
+
+          unless specification['confine'].is_a?(Hash)
+            @warnings << "#{file}: 'confine' is not a Hash in key #{key}"
+            return false
+          end
+
+          specification['confine'].each do |confinement_setting, confinement_value|
+            return true unless confine.is_a?(Hash)
+            return true unless confine.key?(confinement_setting)
+            Array(confine[confinement_setting]).each do |value|
+              return false if Array(confinement_value).include?(value)
+            end
+          end
+
+          true
+        end
+      end
+
+      value = Marshal.load(Marshal.dump(data))
+      value.delete_if { |key, specification| should_delete(file, key, specification, confine) }
+
+      value
+    end
+
+    def compile(profile, confine = nil)
+      merged_data = {}
+
+      # Pass 1: Merge everything with confined values removed.
+      @data.each do |file, data|
+        next if file == 'merged data'
+        data.each do |key, value|
+          confined_value = apply_confinement(file, value, confine)
+
+          unless confined_value.is_a?(Hash)
+            if merged_data.key?(key)
+              @warnings << "#{file}#{confine.nil? ? '' : " (confined: #{confine})"}: key #{key} redefined (previous value: #{merged_data[key]}, new value: #{confined_value})" unless key == 'version'
+            end
+
+            merged_data[key] = confined_value
+            next
+          end
+
+          merged_data[key] ||= {}
+          confined_value.each do |k, v|
+            merged_data[key][k] ||= {}
+            merged_data[key][k] = merged_data[key][k].deep_merge!(v, { knockout_prefix: '--' })
+          end
+        end
+      end
+
+      # Pass 2: Build a mapping of all of the checks we found.
+      check_map = {
+        'checks'   => {},
+        'controls' => {},
+        'ces'      => {},
+      }
+
+      merged_data['checks']&.each do |check_name, specification|
+        unless specification['type'] == 'puppet-class-parameter'
+          @warnings << "check #{check_name}: Not a Puppet parameter"
+          next
+        end
+
+        unless specification['settings'].is_a?(Hash)
+          @warnings << "check #{check_name}: Missing required 'settings' Hash"
+          next
+        end
+
+        unless specification['settings'].key?('parameter') && specification['settings']['parameter'].is_a?(String)
+          @warnings << "check #{check_name}: Missing required key 'parameter' or wrong data type"
+          next
+        end
+
+        unless specification['settings'].key?('value')
+          @warnings << "check #{check_name}: Missing required key 'value' for parameter #{specification['settings']['parameter']}"
+          next
+        end
+
+        check_map['checks'][check_name] = [specification]
+
+        specification['controls']&.each do |control_name, v|
+          next unless v
+          check_map['controls'][control_name] ||= []
+          check_map['controls'][control_name] << specification
+        end
+
+        specification['ces']&.each do |ce_name|
+          next unless merged_data['ce']&.key?(ce_name)
+
+          check_map['ces'][ce_name] ||= []
+          check_map['ces'][ce_name] << specification
+
+          merged_data['ce'][ce_name]['controls']&.each do |control_name, value|
+            next unless value
+
+            check_map['controls'][control_name] ||= []
+            check_map['controls'][control_name] << specification
+          end
+        end
+      end
+
+      # Pass 3: Extract the relevant Hiera values.
+      hiera_spec = []
+      info = merged_data['profiles'][profile]
+
+      ['checks', 'controls', 'ces'].each do |map_type|
+        info[map_type]&.each do |key, value|
+          next unless value
+          next unless check_map[map_type]&.key?(key)
+          hiera_spec += check_map[map_type][key]
+        end
+      end
+
+      if hiera_spec.empty?
+        @warnings << "#{profile}: No Hiera values found"
+        return {}
+      end
+
+      hiera = {}
+
+      hiera_spec.each do |spec|
+        setting = spec['settings']
+
+        if hiera.key?(setting['parameter'])
+          if setting['value'].class.to_s != hiera[setting['parameter']].class.to_s
+            warnings << [
+              "#{profile}:  key #{setting['parameter']} type mismatch",
+              "(previous value: #{hiera[setting['parameter']]} (#{hiera[setting['parameter']].class}),",
+              "new value: #{setting['value']} (#{setting['value'].class})",
+            ].join(' ')
+            hiera[setting['parameter']] = setting['value']
+            next
+          end
+
+          if setting['value'].is_a?(Hash)
+            warn "#{profile}: Merging Hash values for #{setting['parameter']}"
+            hiera[setting['parameter']] = hiera[setting['parameter']].deep_merge!(setting['value'])
+            next
+          end
+
+          if setting['value'].is_a?(Array)
+            warn "#{profile}: Merging Array values for #{setting['parameter']}"
+            hiera[setting['parameter']] = (hiera[setting['parameter']] + setting['value']).uniq
+            next
+          end
+
+          warnings << "#{profile}: key #{setting['parameter']} redefined (previous value: #{hiera[setting['parameter']]}, new value: #{setting['value']}"
+        end
+
+        hiera[setting['parameter']] = setting['value']
+      end
+    end
+
+    def validate
+      if profiles.nil?
+        @warnings << 'No profiles found, unable to validate Hiera data'
+        return nil
+      end
+
+      profiles.each do |profile|
+        compile(profile)
+        confines.each do |confine|
+          compile(profile, confine)
+        end
+      end
+    end
+
     def lint(file, data)
       check_version(file, data)
       check_keys(file, data)
@@ -376,6 +597,8 @@ module Scelint
       check_ce(file, data['ce']) if data['ce']
       check_checks(file, data['checks']) if data['checks']
       check_controls(file, data['controls']) if data['controls']
+    rescue => e
+      @errors << "#{file}: #{e.message} (not a hash?)"
     end
   end
 end

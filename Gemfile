@@ -12,3 +12,9 @@ group :tests do
   gem 'rubocop-rspec', '~> 2.10'
   gem 'rubocop-rake', '~> 0.6.0'
 end
+
+group :development do
+  gem 'pry', '~> 0.14.1'
+  gem 'pry-byebug', '~> 3.10'
+  gem 'rdoc', '~> 6.4'
+end
