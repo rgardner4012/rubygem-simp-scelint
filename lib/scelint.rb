@@ -457,7 +457,7 @@ module Scelint
 
           unless confined_value.is_a?(Hash)
             if merged_data.key?(key)
-              @warnings << "#{file}#{confine.nil? ? '' : " (confined: #{confine})"}: key #{key} redefined (previous value: #{merged_data[key]}, new value: #{confined_value})" unless key == 'version'
+              @warnings << "#{file} #{confine.nil? ? '(no confinement data)' : "(confined: #{confine})"}: key #{key} redefined (previous value: #{merged_data[key]}, new value: #{confined_value})" unless key == 'version'
             end
 
             merged_data[key] = confined_value
@@ -481,22 +481,22 @@ module Scelint
 
       merged_data['checks']&.each do |check_name, specification|
         unless specification['type'] == 'puppet-class-parameter'
-          @warnings << "check #{check_name}: Not a Puppet parameter"
+          @warnings << "check #{check_name} #{confine.nil? ? '(no confinement data)' : "(confined: #{confine})"}: Not a Puppet parameter"
           next
         end
 
         unless specification['settings'].is_a?(Hash)
-          @warnings << "check #{check_name}: Missing required 'settings' Hash"
+          @warnings << "check #{check_name} #{confine.nil? ? '(no confinement data)' : "(confined: #{confine})"}: Missing required 'settings' Hash"
           next
         end
 
         unless specification['settings'].key?('parameter') && specification['settings']['parameter'].is_a?(String)
-          @warnings << "check #{check_name}: Missing required key 'parameter' or wrong data type"
+          @warnings << "check #{check_name} #{confine.nil? ? '(no confinement data)' : "(confined: #{confine})"}: Missing required key 'parameter' or wrong data type"
           next
         end
 
         unless specification['settings'].key?('value')
-          @warnings << "check #{check_name}: Missing required key 'value' for parameter #{specification['settings']['parameter']}"
+          @warnings << "check #{check_name} #{confine.nil? ? '(no confinement data)' : "(confined: #{confine})"}: Missing required key 'value' for parameter #{specification['settings']['parameter']}"
           next
         end
 
@@ -525,7 +525,7 @@ module Scelint
 
       # Pass 3: Extract the relevant Hiera values.
       hiera_spec = []
-      info = merged_data['profiles'][profile]
+      info = merged_data['profiles'][profile] || {}
 
       ['checks', 'controls', 'ces'].each do |map_type|
         info[map_type]&.each do |key, value|
@@ -536,7 +536,7 @@ module Scelint
       end
 
       if hiera_spec.empty?
-        @warnings << "#{profile}: No Hiera values found"
+        @warnings << "#{profile} #{confine.nil? ? '(no confinement data)' : "(confined: #{confine})"}: No Hiera values found"
         return {}
       end
 
@@ -548,7 +548,7 @@ module Scelint
         if hiera.key?(setting['parameter'])
           if setting['value'].class.to_s != hiera[setting['parameter']].class.to_s
             warnings << [
-              "#{profile}:  key #{setting['parameter']} type mismatch",
+              "#{profile} #{confine.nil? ? '(no confinement data)' : "(confined: #{confine})"}:  key #{setting['parameter']} type mismatch",
               "(previous value: #{hiera[setting['parameter']]} (#{hiera[setting['parameter']].class}),",
               "new value: #{setting['value']} (#{setting['value'].class})",
             ].join(' ')
@@ -557,18 +557,18 @@ module Scelint
           end
 
           if setting['value'].is_a?(Hash)
-            warn "#{profile}: Merging Hash values for #{setting['parameter']}"
+            # warn "#{profile}: Merging Hash values for #{setting['parameter']}"
             hiera[setting['parameter']] = hiera[setting['parameter']].deep_merge!(setting['value'])
             next
           end
 
           if setting['value'].is_a?(Array)
-            warn "#{profile}: Merging Array values for #{setting['parameter']}"
+            # warn "#{profile}: Merging Array values for #{setting['parameter']}"
             hiera[setting['parameter']] = (hiera[setting['parameter']] + setting['value']).uniq
             next
           end
 
-          warnings << "#{profile}: key #{setting['parameter']} redefined (previous value: #{hiera[setting['parameter']]}, new value: #{setting['value']}"
+          warnings << "#{profile} #{confine.nil? ? '(no confinement data)' : "(confined: #{confine})"}: key #{setting['parameter']} redefined (previous value: #{hiera[setting['parameter']]}, new value: #{setting['value']})"
         end
 
         hiera[setting['parameter']] = setting['value']
