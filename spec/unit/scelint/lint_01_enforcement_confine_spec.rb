@@ -30,8 +30,9 @@ RSpec.describe Scelint::Lint do
       expect(lint.errors).to eq([])
     end
 
-    it 'has no warnings' do
-      expect(lint.warnings).to eq([])
+    it 'has a warning' do
+      expect(lint.warnings.count).to eq(1)
+      expect(lint.warnings[0]).to match(%r{no confinement data.*No Hiera values found})
     end
   end
 end
