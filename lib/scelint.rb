@@ -21,6 +21,7 @@ module Scelint
       @data = {}
       @errors = []
       @warnings = []
+      @notes = []
 
       merged_data = {}
 
@@ -85,6 +86,8 @@ module Scelint
     def files
       @data.keys - ['merged data']
     end
+
+    attr_reader :notes
 
     attr_reader :warnings
 
@@ -456,8 +459,13 @@ module Scelint
           confined_value = apply_confinement(file, value, confine)
 
           unless confined_value.is_a?(Hash)
-            if merged_data.key?(key)
-              @warnings << "#{file} #{confine.nil? ? '(no confinement data)' : "(confined: #{confine})"}: key #{key} redefined (previous value: #{merged_data[key]}, new value: #{confined_value})" unless key == 'version'
+            if merged_data.key?(key) && key != 'version'
+              message = "#{file} #{confine.nil? ? '(no confinement data)' : "(confined: #{confine})"}: key #{key} redefined"
+              if merged_data[key] == confined_value
+                @notes << message
+              else
+                @warnings << "#{message} (previous value: #{merged_data[key]}, new value: #{confined_value})"
+              end
             end
 
             merged_data[key] = confined_value
@@ -536,7 +544,7 @@ module Scelint
       end
 
       if hiera_spec.empty?
-        @warnings << "#{profile} #{confine.nil? ? '(no confinement data)' : "(confined: #{confine})"}: No Hiera values found"
+        @notes << "#{profile} #{confine.nil? ? '(no confinement data)' : "(confined: #{confine})"}: No Hiera values found"
         return {}
       end
 
@@ -547,7 +555,7 @@ module Scelint
 
         if hiera.key?(setting['parameter'])
           if setting['value'].class.to_s != hiera[setting['parameter']].class.to_s
-            warnings << [
+            @errors << [
               "#{profile} #{confine.nil? ? '(no confinement data)' : "(confined: #{confine})"}:  key #{setting['parameter']} type mismatch",
               "(previous value: #{hiera[setting['parameter']]} (#{hiera[setting['parameter']].class}),",
               "new value: #{setting['value']} (#{setting['value'].class})",
@@ -557,18 +565,23 @@ module Scelint
           end
 
           if setting['value'].is_a?(Hash)
-            # warn "#{profile}: Merging Hash values for #{setting['parameter']}"
+            @notes << "#{profile} #{confine.nil? ? '(no confinement data)' : "(confined: #{confine})"}: Merging Hash values for #{setting['parameter']}"
             hiera[setting['parameter']] = hiera[setting['parameter']].deep_merge!(setting['value'])
             next
           end
 
           if setting['value'].is_a?(Array)
-            # warn "#{profile}: Merging Array values for #{setting['parameter']}"
+            @notes << "#{profile} #{confine.nil? ? '(no confinement data)' : "(confined: #{confine})"}: Merging Array values for #{setting['parameter']}"
             hiera[setting['parameter']] = (hiera[setting['parameter']] + setting['value']).uniq
             next
           end
 
-          warnings << "#{profile} #{confine.nil? ? '(no confinement data)' : "(confined: #{confine})"}: key #{setting['parameter']} redefined (previous value: #{hiera[setting['parameter']]}, new value: #{setting['value']})"
+          message = "#{profile} #{confine.nil? ? '(no confinement data)' : "(confined: #{confine})"}: key #{setting['parameter']} redefined"
+          if hiera[setting['parameter']] == setting['value']
+            @notes << message
+          else
+            @warnings << "#{message} (previous value: #{hiera[setting['parameter']]}, new value: #{setting['value']})"
+          end
         end
 
         hiera[setting['parameter']] = setting['value']
@@ -577,7 +590,7 @@ module Scelint
 
     def validate
       if profiles.nil?
-        @warnings << 'No profiles found, unable to validate Hiera data'
+        @notes << 'No profiles found, unable to validate Hiera data'
         return nil
       end
 

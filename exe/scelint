@@ -14,11 +14,15 @@ if count.zero?
 end
 
 lint.errors.each do |error|
-  warn error
+  warn "ERROR: #{error}"
 end
 
 lint.warnings.each do |warning|
-  warn warning
+  warn "WARNING: #{warning}"
+end
+
+lint.notes.each do |note|
+  warn "NOTE: #{note}"
 end
 
 message = "Checked #{count} files."
@@ -30,9 +34,9 @@ else
   exit_code = 1
 end
 
-if lint.warnings.count > 0
-  message += "  #{lint.warnings.count} warnings."
-end
+message += "  #{lint.warnings.count} warnings." if lint.warnings.count > 0
+
+message += " #{lint.notes.count} notes." if lint.notes.count > 0
 
 puts message
 exit exit_code
