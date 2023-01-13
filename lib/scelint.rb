@@ -92,7 +92,7 @@ module Scelint
     attr_reader :warnings
 
     attr_reader :errors
-    def check_benchmark_version
+    
     def check_version(file, data)
       @errors << "#{file}: version check failed" unless data['version'] == '2.0.0'
     end
