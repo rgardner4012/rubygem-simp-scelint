@@ -201,7 +201,7 @@ module Scelint
       ok = [
         'id',
         'title',
-        'benchmark_version'
+        'benchmark_version',
         'description',
         'controls',
         'ces',
