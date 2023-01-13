@@ -92,7 +92,7 @@ module Scelint
     attr_reader :warnings
 
     attr_reader :errors
-
+    def check_benchmark_version
     def check_version(file, data)
       @errors << "#{file}: version check failed" unless data['version'] == '2.0.0'
     end
@@ -111,8 +111,16 @@ module Scelint
       end
     end
 
+    def check_id(file, data)
+      @warnings << "#{file}: bad id '#{data}'" unless data.is_a?(String)
+    end
+
     def check_title(file, data)
       @warnings << "#{file}: bad title '#{data}'" unless data.is_a?(String)
+    end
+
+    def check_benchmark_version(file, data)
+      @warnings << "#{file}: bad Benchmark Version '#{data}'" unless data.is_a?(String)
     end
 
     def check_description(file, data)
@@ -191,7 +199,9 @@ module Scelint
 
     def check_profiles(file, data)
       ok = [
+        'id',
         'title',
+        'benchmark_version'
         'description',
         'controls',
         'ces',
@@ -203,8 +213,9 @@ module Scelint
         value.each_key do |key|
           @warnings << "#{file} (profile '#{profile}'): unexpected key '#{key}'" unless ok.include?(key)
         end
-
+        check_id(file, value['id']) unless value['id'].nil?
         check_title(file, value['title']) unless value['title'].nil?
+        check_benchmark_version(file, value['benchmark_version']) unless value['benchmark_version'].nil?
         check_description(file, value['description']) unless value['description'].nil?
         check_controls(file, value['controls']) unless value['controls'].nil?
         check_profile_ces(file, value['ces']) unless value['ces'].nil?
