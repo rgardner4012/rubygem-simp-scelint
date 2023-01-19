@@ -2,9 +2,30 @@
 # frozen_string_literal: true
 
 require 'scelint'
+require 'optparse'
+
+@options = {}
+OptionParser.new do |opts|
+  opts.banner = "Usage: scelint.rb [options] [modules_dir]"
+  
+  @options[:output_level] = :error
+  opts.on("-o", "--output_level [OUTPUT_LEVEL]", [:error, :warning, :notes], "Level of output to display (error, warning, notes)") do |output|
+    @options[:output_level] = output
+  end
+
+  @options[:fail_on] = :error
+  opts.on("-f", "--fail_on_level [FAIL_LEVEL]", [:error, :warning ], "Level of output to fail on (error, warning)") do |fail_level|
+    @options[:fail_on] = fail_level
+  end
+
+  @options[:puppet_validation] == false
+  opts.on("-p", "--puppet_validation", "Run extensive puppet validation") do |p|
+    @options[:puppet_validation] = p
+  end
+end.parse!
 
 to_check = ARGV.empty? ? ['.'] : ARGV
-lint = Scelint::Lint.new(to_check)
+lint = Scelint::Lint.new(@options, to_check)
 
 count = lint.files.count
 
@@ -17,18 +38,25 @@ lint.errors.each do |error|
   warn "ERROR: #{error}"
 end
 
-lint.warnings.each do |warning|
-  warn "WARNING: #{warning}"
+unless @options[:output_level] == :error
+  lint.warnings.each do |warning|
+    warn "WARNING: #{warning}"
+  end
 end
 
-lint.notes.each do |note|
-  warn "NOTE: #{note}"
+unless @options[:output_level] == :error || @options[:output_level] == :warning
+  lint.notes.each do |note|
+    warn "NOTE: #{note}"
+  end
 end
 
 message = "Checked #{count} files."
-if lint.errors.count == 0
+if lint.errors.count == 0 && @options[:fail_on] != :warning
   message += '  No errors.'
   exit_code = 0
+elsif lint.errors.count == 0
+  message += '  No errors.'
+  exit_code = 1
 else
   message += "  #{lint.errors.count} errors."
   exit_code = 1

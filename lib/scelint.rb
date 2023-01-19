@@ -3,6 +3,7 @@
 require 'yaml'
 require 'json'
 require 'deep_merge'
+require 'optparse'
 
 require 'scelint/version'
 
@@ -17,7 +18,8 @@ module Scelint
   # @example Look for data in all modules in the current directory
   #    lint = Scelint::Lint.new(Dir.glob('*'))
   class Lint
-    def initialize(paths = ['.'])
+    def initialize(options, paths = ['.'])
+      @options = options
       @data = {}
       @errors = []
       @warnings = []
@@ -604,11 +606,12 @@ module Scelint
         @notes << 'No profiles found, unable to validate Hiera data'
         return nil
       end
-
-      profiles.each do |profile|
-        compile(profile)
-        confines.each do |confine|
-          compile(profile, confine)
+      unless @options[:puppet_validation]
+        profiles.each do |profile|
+          compile(profile)
+          confines.each do |confine|
+            compile(profile, confine)
+          end
         end
       end
     end
