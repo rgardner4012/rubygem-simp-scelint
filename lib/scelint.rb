@@ -567,7 +567,7 @@ module Scelint
         setting = spec['settings']
 
         if hiera.key?(setting['parameter'])
-          if setting['value'].class.to_s != hiera[setting['parameter']].class.to_s
+          if setting['value'].class.to_s != hiera[setting['parameter']].class.to_s && !(setting['value'].is_a?(TrueClass) || setting['value'].is_a?(FalseClass))
             @errors << [
               "#{profile} #{confine.nil? ? '(no confinement data)' : "(confined: #{confine})"}:  key #{setting['parameter']} type mismatch",
               "(previous value: #{hiera[setting['parameter']]} (#{hiera[setting['parameter']].class}),",
